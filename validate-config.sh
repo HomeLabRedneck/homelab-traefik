@@ -83,8 +83,9 @@ echo ""
 echo "🔧 Checking environment variables..."
 
 if [ -f ".env" ]; then
+    # Check dashboard credentials
     if grep -q "TRAEFIK_DASHBOARD_CREDENTIALS=" .env; then
-        if grep -q "your_secure_token_here" .env; then
+        if grep -q "your_bcrypt_hash_here" .env; then
             print_status 1 "Dashboard credentials not configured"
             echo "   Generate with: echo \$(htpasswd -nb admin your_password) | sed -e s/\\\\\$/\\\\\$\\\\\$/g"
         else
@@ -93,6 +94,44 @@ if [ -f ".env" ]; then
     else
         print_status 1 "TRAEFIK_DASHBOARD_CREDENTIALS missing from .env"
     fi
+    
+    # Check ACME email
+    if grep -q "ACME_EMAIL=" .env; then
+        if grep -q "youremail@email.com" .env; then
+            print_status 1 "ACME email not configured (still using example)"
+            echo "   Update ACME_EMAIL in .env file"
+        else
+            print_status 0 "ACME email configured"
+        fi
+    else
+        print_status 1 "ACME_EMAIL missing from .env"
+    fi
+    
+    # Check domain configuration
+    if grep -q "DOMAIN_MAIN=" .env; then
+        if grep -q "local.example.com" .env; then
+            print_status 1 "Domain configuration not updated (still using example)"
+            echo "   Update DOMAIN_MAIN, DOMAIN_WILDCARD, and DOMAIN_DASHBOARD in .env file"
+        else
+            print_status 0 "Domain configuration updated"
+        fi
+    else
+        print_status 1 "DOMAIN_MAIN missing from .env"
+    fi
+    
+    # Check ACME server configuration
+    if grep -q "ACME_CA_SERVER=" .env; then
+        if grep -q "staging" .env; then
+            print_warning "Using ACME staging server (good for testing)"
+        else
+            print_status 0 "Using ACME production server"
+        fi
+    else
+        print_status 1 "ACME_CA_SERVER missing from .env"
+    fi
+else
+    print_status 1 ".env file missing"
+    echo "   Copy from: cp .env.example .env"
 fi
 
 # Check Cloudflare token
@@ -116,11 +155,16 @@ echo "🐳 Checking service status..."
 if docker-compose ps | grep -q "traefik.*Up"; then
     print_status 0 "Traefik container is running"
     
-    # Check if dashboard is accessible
-    if curl -k -s -o /dev/null -w "%{http_code}" https://traefik-dashboard.internal.labratech.org | grep -q "200\|401"; then
-        print_status 0 "Dashboard is accessible"
+    # Check if dashboard is accessible (load domain from .env if available)
+    DASHBOARD_DOMAIN="traefik-dashboard.local.example.com"
+    if [ -f ".env" ] && grep -q "DOMAIN_DASHBOARD=" .env; then
+        DASHBOARD_DOMAIN=$(grep "DOMAIN_DASHBOARD=" .env | cut -d'=' -f2)
+    fi
+    
+    if curl -k -s -o /dev/null -w "%{http_code}" "https://${DASHBOARD_DOMAIN}" | grep -q "200\|401"; then
+        print_status 0 "Dashboard is accessible at https://${DASHBOARD_DOMAIN}"
     else
-        print_status 1 "Dashboard is not accessible"
+        print_status 1 "Dashboard is not accessible at https://${DASHBOARD_DOMAIN}"
         echo "   Check DNS resolution and certificate generation"
     fi
 else
@@ -133,6 +177,8 @@ echo "🎉 Validation complete!"
 echo ""
 echo "📚 Next steps:"
 echo "   1. Fix any issues shown above"
-echo "   2. Deploy with: docker-compose up -d"
-echo "   3. Monitor logs: docker-compose logs -f traefik"
-echo "   4. Access dashboard: https://traefik-dashboard.internal.labratech.org"
+echo "   2. Copy and configure: cp .env.example .env"
+echo "   3. Update domains, email, and credentials in .env"
+echo "   4. Deploy with: docker-compose up -d"
+echo "   5. Monitor logs: docker-compose logs -f traefik"
+echo "   6. Access dashboard: https://\${DOMAIN_DASHBOARD} (from your .env file)"

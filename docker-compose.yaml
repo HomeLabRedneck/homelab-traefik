@@ -1,6 +1,54 @@
 version: "3.8"
 
 services:
+  # 🔒 Docker Socket Proxy - Secure intermediary for Docker API access
+  # Provides controlled access to Docker socket with minimal required permissions
+  # Eliminates need for direct socket mounting in Traefik container
+  # 🌐 Can discover ALL containers via Docker socket, regardless of network membership
+  dockerproxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: dockerproxy
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - dockerproxy # Internal network for secure communication
+    ports:
+      - "127.0.0.1:2375:2375" # Bind to localhost only for additional security
+    environment:
+      # 🟢 ALLOWED: Minimal required permissions for Traefik functionality
+      CONTAINERS: 1    # Allow container discovery and monitoring
+      SERVICES: 1      # Allow Docker Swarm service discovery (if used)
+      NETWORKS: 1      # Allow network discovery for routing
+      EVENTS: 1        # Allow real-time event monitoring for dynamic updates
+      
+      # 🔴 DENIED: Dangerous operations that could compromise security
+      POST: 0          # Deny container creation/modification
+      BUILD: 0         # Deny image building operations
+      COMMIT: 0        # Deny container commit operations
+      SECRETS: 0       # Deny access to Docker secrets
+      CONFIGS: 0       # Deny access to Docker configs
+      VOLUMES: 0       # Deny volume management operations
+      IMAGES: 0        # Deny image management operations
+      INFO: 0          # Deny system information access
+      DISTRIBUTION: 0  # Deny distribution operations
+      SESSION: 0       # Deny session operations
+      EXEC: 0          # Deny container exec operations
+      TASKS: 0         # Deny task operations
+      NODES: 0         # Deny node operations
+      PLUGINS: 0       # Deny plugin operations
+      SYSTEM: 0        # Deny system operations
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro # Read-only Docker socket access
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:2375/version"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # 🔀 Traefik Reverse Proxy - Now connects via secure docker-socket-proxy
+  # No longer requires direct Docker socket access, improving security posture
   traefik:
     image: traefik:v3.5
     container_name: traefik
@@ -8,7 +56,8 @@ services:
     security_opt:
       - no-new-privileges:true
     networks:
-      - proxy
+      - proxy        # External network for service communication
+      - dockerproxy  # Internal network for Docker API access via proxy
     ports:
       - 80:80
       - 443:443
@@ -18,30 +67,41 @@ services:
       CF_DNS_API_TOKEN_FILE: /run/secrets/cf_api_token # note using _FILE for docker secrets
       # CF_DNS_API_TOKEN: ${CF_DNS_API_TOKEN} # if using .env
       TRAEFIK_DASHBOARD_CREDENTIALS: ${TRAEFIK_DASHBOARD_CREDENTIALS}
+      # ACME Configuration
+      ACME_EMAIL: ${ACME_EMAIL}
+      ACME_CA_SERVER: ${ACME_CA_SERVER}
+      # Domain Configuration
+      DOMAIN_MAIN: ${DOMAIN_MAIN}
+      DOMAIN_WILDCARD: ${DOMAIN_WILDCARD}
+      DOMAIN_DASHBOARD: ${DOMAIN_DASHBOARD}
     secrets:
       - cf_api_token
     env_file: .env # use .env
     volumes:
       - /etc/localtime:/etc/localtime:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # 🔒 REMOVED: Direct Docker socket mount - now uses secure proxy
+      # - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./data/traefik.yml:/traefik.yml:ro
       - ./data/acme.json:/acme.json
       # - ./data/config.yml:/config.yml:ro
+    depends_on:
+      dockerproxy:
+        condition: service_healthy # Wait for proxy to be ready
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.traefik.entrypoints=http"
-      - "traefik.http.routers.traefik.rule=Host(`traefik-dashboard.local.example.com`)"
+      - "traefik.http.routers.traefik.rule=Host(`${DOMAIN_DASHBOARD}`)"
       - "traefik.http.middlewares.traefik-auth.basicauth.users=${TRAEFIK_DASHBOARD_CREDENTIALS}"
       - "traefik.http.middlewares.traefik-https-redirect.redirectscheme.scheme=https"
       - "traefik.http.middlewares.sslheader.headers.customrequestheaders.X-Forwarded-Proto=https"
       - "traefik.http.routers.traefik.middlewares=traefik-https-redirect"
       - "traefik.http.routers.traefik-secure.entrypoints=https"
-      - "traefik.http.routers.traefik-secure.rule=Host(`traefik-dashboard.local.example.com`)"
+      - "traefik.http.routers.traefik-secure.rule=Host(`${DOMAIN_DASHBOARD}`)"
       - "traefik.http.routers.traefik-secure.middlewares=traefik-auth"
       - "traefik.http.routers.traefik-secure.tls=true"
       - "traefik.http.routers.traefik-secure.tls.certresolver=cloudflare"
-      - "traefik.http.routers.traefik-secure.tls.domains[0].main=local.example.com"
-      - "traefik.http.routers.traefik-secure.tls.domains[0].sans=*.local.example.com"
+      - "traefik.http.routers.traefik-secure.tls.domains[0].main=${DOMAIN_MAIN}"
+      - "traefik.http.routers.traefik-secure.tls.domains[0].sans=${DOMAIN_WILDCARD}"
       - "traefik.http.routers.traefik-secure.service=api@internal"
 
 secrets:
@@ -49,5 +109,17 @@ secrets:
     file: ./cf_api_token.txt
 
 networks:
+  # 🌐 External network for service communication
+  # Services to be discovered by Traefik should be on this network
   proxy:
     external: true
+  
+  # 🔒 Internal network for secure Docker API communication
+  # Isolates docker-socket-proxy communication from other services
+  # Note: docker-socket-proxy can discover containers on ANY network via Docker socket
+  dockerproxy:
+    driver: bridge
+    internal: false # Allow outbound connections for health checks
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
