@@ -15,17 +15,19 @@ serversTransport:
   insecureSkipVerify: true
 providers:
   docker:
-    endpoint: "unix:///var/run/docker.sock"
+    # 🔒 Connect via secure docker-socket-proxy instead of direct socket
+    # This eliminates the need for privileged Docker socket access
+    endpoint: "tcp://dockerproxy:2375"
     exposedByDefault: false
   # file:
   #   filename: /config.yml
 certificatesResolvers:
   cloudflare:
     acme:
-      email: youremail@email.com
+      email: ${ACME_EMAIL}
       storage: acme.json
       # caServer: https://acme-v02.api.letsencrypt.org/directory # prod (default)
-      caServer: https://acme-staging-v02.api.letsencrypt.org/directory # staging
+      caServer: ${ACME_CA_SERVER} # configurable via environment variable
       dnsChallenge:
         provider: cloudflare
         #disablePropagationCheck: true # uncomment this if you have issues pulling certificates through cloudflare, By setting this flag to true disables the need to wait for the propagation of the TXT record to all authoritative name servers.
