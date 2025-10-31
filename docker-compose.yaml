@@ -4,6 +4,7 @@ services:
   # 🔒 Docker Socket Proxy - Secure intermediary for Docker API access
   # Provides controlled access to Docker socket with minimal required permissions
   # Eliminates need for direct socket mounting in Traefik container
+  # 🌐 Can discover ALL containers via Docker socket, regardless of network membership
   dockerproxy:
     image: tecnativa/docker-socket-proxy:latest
     container_name: dockerproxy
@@ -109,11 +110,13 @@ secrets:
 
 networks:
   # 🌐 External network for service communication
+  # Services to be discovered by Traefik should be on this network
   proxy:
     external: true
   
   # 🔒 Internal network for secure Docker API communication
   # Isolates docker-socket-proxy communication from other services
+  # Note: docker-socket-proxy can discover containers on ANY network via Docker socket
   dockerproxy:
     driver: bridge
     internal: false # Allow outbound connections for health checks

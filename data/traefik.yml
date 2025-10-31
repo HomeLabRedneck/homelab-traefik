@@ -19,6 +19,10 @@ providers:
     # This eliminates the need for privileged Docker socket access
     endpoint: "tcp://dockerproxy:2375"
     exposedByDefault: false
+    # 🌐 Ensure Traefik can discover containers on all networks
+    # The docker-socket-proxy has full Docker socket access and can see ALL containers
+    network: "proxy"  # Default network for discovered services
+    watch: true       # Enable real-time container discovery
   # file:
   #   filename: /config.yml
 certificatesResolvers:
@@ -26,7 +30,6 @@ certificatesResolvers:
     acme:
       email: ${ACME_EMAIL}
       storage: acme.json
-      # caServer: https://acme-v02.api.letsencrypt.org/directory # prod (default)
       caServer: ${ACME_CA_SERVER} # configurable via environment variable
       dnsChallenge:
         provider: cloudflare
